@@ -1,0 +1,2 @@
+# keep the patch byte-exact (applied with git apply on any OS)
+*.patch -text

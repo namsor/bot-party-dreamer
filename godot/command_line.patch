@@ -1,0 +1,42 @@
+diff --git a/core/command_line.gd b/core/command_line.gd
+index 4989917..d571912 100644
+--- a/core/command_line.gd
++++ b/core/command_line.gd
+@@ -18,6 +18,8 @@ extends Node
+ ## --bots=N               computer players           --bot-skill=easy|normal|hard
+ ## --state=NAME           load a save state (console "savestate NAME")
+ ## --editor               open the map editor
++## --rl                   train Dreamer on P1 (rl/, godot_rl_agents; options may also come
++##                        as engine args, before "--", the way godot_rl_agents passes them)
+ 
+ const HELP := """Bot Party command line (options go after "--"):
+   --help                  this list
+@@ -31,13 +33,18 @@ const HELP := """Bot Party command line (options go after "--"):
+   --arena=NAME|FILE       random, steps, pillar, windy, meteor, or a map file
+   --bots=N --bot-skill=easy|normal|hard
+   --state=NAME            load a save state
+-  --editor                open the map editor"""
++  --editor                open the map editor
++  --rl                    train Dreamer on P1 (with --party)"""
+ 
+ var options := {}
+ 
+ 
+ func _ready() -> void:
+ 	options = parse(OS.get_cmdline_user_args())
++	# godot_rl_agents starts the game with "--key=value" engine args (no "--").
++	var engine := parse(OS.get_cmdline_args())
++	if engine.has("rl"):
++		options.merge(engine)
+ 	if not options.is_empty():
+ 		_run.call_deferred()
+ 
+@@ -81,6 +88,8 @@ func _run() -> void:
+ 		party.bot_skill = maxi(0, ["easy", "normal", "hard"].find(o["bot-skill"].to_lower()))
+ 	if o.has("arena"):
+ 		party.arena_choice = _arena(o.arena)
++	if o.has("rl"):
++		get_tree().root.add_child(load("res://rl/rl_trainer.gd").new())
+ 	if o.has("state"):
+ 		print(SaveStates.load_state(get_tree(), o.state))
+ 		return

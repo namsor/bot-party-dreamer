@@ -1,0 +1,57 @@
+# Bot Party presets, applied on top of dreamerv3-torch/configs.yaml "defaults".
+# Steps, eval_every, log_every and time_limit are in game frames (60 per second of game time);
+# Dreamer divides them by action_repeat.
+
+botparty:
+  task: botparty_steps          # botparty_<arena>: steps, pillar, windy, meteor, random
+  logdir: logdir/steps
+  device: cpu                   # no NVIDIA GPU here
+  compile: False                # torch.compile needs a C++ toolchain on Windows
+  steps: 1e6
+  action_repeat: 4
+  envs: 1
+  parallel: False
+  time_limit: 4000              # a race is at most 40 s = 2400 frames
+  prefill: 2500
+  train_ratio: 128              # CPU: fewer updates per env step than the default 512
+  eval_every: 2e4
+  eval_minutes: 0                # also evaluate (window + checkpoint) every N minutes; 0 = off
+  eval_episode_num: 3
+  log_every: 2e3
+  video_pred_log: False         # no camera images: the model sees the 65-float state
+  # Smaller world model (vector input, CPU)
+  dyn_hidden: 256
+  dyn_deter: 256
+  units: 256
+  encoder: {mlp_keys: 'state', cnn_keys: '$^', mlp_layers: 3, mlp_units: 256}
+  decoder: {mlp_keys: 'state', cnn_keys: '$^', mlp_layers: 3, mlp_units: 256}
+  actor: {dist: 'onehot', std: 'none'}
+  imag_gradient: 'reinforce'
+  # The game (botparty_dreamer/env.py)
+  port: 11008                   # train envs 11008+i, eval envs 11108+i
+  bots: 3
+  bot_skill: easy               # easy, normal, hard
+  speedup: 8                    # training game speed
+  eval_window: True             # evaluation races in a window...
+  eval_speedup: 2               # ...at this speed (1 = real time)
+  exe: ''                       # exported BotParty.exe (step 4); '' = Godot editor binary + project
+
+# Quick end-to-end check (minutes, not a real training)
+smoke:
+  logdir: logdir/smoke
+  steps: 4000
+  prefill: 400
+  eval_every: 2000
+  log_every: 400
+  eval_episode_num: 1
+  batch_size: 8
+  batch_length: 32
+
+# Short real run (~2-3 h on this CPU): does it start learning?
+short:
+  logdir: logdir/short
+  steps: 8e4
+  train_ratio: 32
+  eval_every: 2e4
+  eval_minutes: 10              # a game window (and a checkpoint) every ~10 min
+  eval_episode_num: 3
