@@ -8,7 +8,7 @@ Observation keys
     image        what TensorBoard shows: a 64x64 minimap when `minimap`, else 1x1 (unused
                  by the model, which only reads `state`; dreamerv3-torch requires the key)
     is_first / is_last / is_terminal
-    log_<mode>_{first,finished,eliminated}   1 on the last step: per-race stats in TensorBoard
+    log_<mode>_{first,finished,timeout,eliminated}   1 on the last step: per-race stats in TensorBoard
 """
 
 import gym
@@ -18,7 +18,7 @@ from godot_rl.core.godot_env import GodotEnv
 from botparty_dreamer.game import ROOT, launch
 
 MOVES, JUMPS = 3, 2  # DreamerController.get_action_space(): move x jump
-OUTCOMES = ("first", "finished", "eliminated")
+OUTCOMES = ("first", "finished", "timeout", "eliminated")  # DreamerController outcomes
 
 # Layout of the 65 floats (DreamerController._features).
 RAYS, DANGERS, OTHERS = 16, 6, 3

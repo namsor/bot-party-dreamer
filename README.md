@@ -26,8 +26,11 @@ this repo is the dad's side project to "cheat" at it with reinforcement learning
   Picking and placing items, the countdown and the scores run on their own between episodes.
 - **Observation:** 65 floats (to the flag, velocity, 16 rays, 6 nearest traps, 3 nearest robots).
 - **Actions:** 6 = {none, left, right} × {jump, no jump}, held for 4 frames.
-- **Reward:** progress on the bots' own distance map to the flag, +10 at the flag, +5 if first,
-  -5 when eliminated, a small time penalty.
+- **Reward:** +0.3 per cell closer to the flag than ever before in the race (on the bots' own
+  distance map), +10 at the flag, +5 if first, -5 for a trap or pit, -1 when the clock runs out,
+  a small time penalty. Trying beats waiting, waiting beats dying
+  ([why](doc/implementation_log.md#step-8--reward-adjustment-then-resume-the-short-run-2026-10-24-2223)).
+- **Recorded races** can be re-scored after a reward change: `tools/relabel_rewards.py <logdir>`.
 - [dreamerv3-torch](https://github.com/NM512/dreamerv3-torch) is used **unmodified**; `train.py`
   plugs in the env and works around a few issues (CPU device, Windows video files, config loading).
 

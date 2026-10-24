@@ -14,12 +14,15 @@ const OTHERS := 3           # nearest other robots
 const SCALE := 1000.0       # pixels -> about -1..1
 const OBS_SIZE := 7 + RAYS + DANGERS * 6 + OTHERS * 2
 
-## Rewards (same spirit as the party points: finish 10, first 5).
+## Rewards (same spirit as the party points: finish 10, first 5). Trying is worth more than
+## waiting: in a 40 s race, waiting for the clock is about -3.4, getting 15 cells closer and then
+## falling about -1, an early fall about -4, reaching the flag about +30.
 const R_FINISH := 10.0
 const R_FIRST := 5.0
-const R_ELIMINATED := -5.0
-const R_PROGRESS := 0.1     # per cell closer to the flag
-const R_TIME := -0.002      # per physics frame (about -0.12 a second)
+const R_ELIMINATED := -5.0  # trap or pit
+const R_TIMEOUT := -1.0     # still racing when the clock ran out
+const R_PROGRESS := 0.3     # per cell closer to the flag than ever before in this race
+const R_TIME := -0.001      # per physics frame (about -0.06 a second)
 
 var ctl: Node               # the PartyController of the current party (set by RlTrainer)
 var helper: HelperBot       # picks and places for P1, measures the distance to the flag
@@ -28,7 +31,7 @@ var episodes := 0
 
 var _terminal := false
 var _outcome := ""
-var _last_dist := INF
+var _best_dist := INF       # closest to the flag so far in this race (cells)
 var _pressed := {}          # action name -> true
 
 
@@ -89,18 +92,22 @@ func tick() -> bool:
 	if done:
 		return true  # the end was not sent yet, or Python hasn't asked for a reset yet
 	if not is_instance_valid(p) or p.get_meta("eliminated", false):
-		_end(R_ELIMINATED, true, "eliminated")
+		if ctl.run_time >= _limit() - 0.1:
+			_end(R_TIMEOUT, true, "timeout")  # the race eliminates whoever is still out there
+		else:
+			_end(R_ELIMINATED, true, "eliminated")
 	elif p.get_meta("finished", false):
 		var first: bool = not ctl.finished.is_empty() and ctl.finished[0] == SLOT
 		_end(R_FINISH + (R_FIRST if first else 0.0), true, "first" if first else "finished")
 	elif ctl.phase != ctl.Phase.RUN:
 		_end(0.0, false, "race over")  # cut short (console skip, game mode): not P1's doing
 	else:
+		# Only new ground counts: no penalty for stepping back or falling, nothing to farm.
 		var d := helper.distance(p.global_position) if helper else INF
-		if is_finite(d) and is_finite(_last_dist):
-			reward += clampf(R_PROGRESS * (_last_dist - d), -1.0, 1.0)
-		if is_finite(d):
-			_last_dist = d
+		if is_finite(d) and d < _best_dist:
+			if is_finite(_best_dist):
+				reward += minf(R_PROGRESS * (_best_dist - d), 1.0)
+			_best_dist = d
 		reward += R_TIME
 	return true
 
@@ -117,7 +124,7 @@ func _start(p: Node) -> void:
 	reward = 0.0
 	_terminal = false
 	_outcome = ""
-	_last_dist = helper.distance(p.global_position) if helper else INF
+	_best_dist = helper.distance(p.global_position) if helper else INF
 
 
 func _end(r: float, terminal: bool, outcome: String) -> void:
@@ -127,6 +134,11 @@ func _end(r: float, terminal: bool, outcome: String) -> void:
 	_outcome = outcome
 	episodes += 1
 	_release_all()
+
+
+## The race's time limit in seconds (the party rule, else the arena's).
+func _limit() -> float:
+	return Party.rule("round_time") if Party.rule("round_time") > 0 else ctl.round_time
 
 
 func _p1() -> Node:
@@ -172,7 +184,7 @@ func _features() -> Array:
 	var i := 0
 	var to_goal: Vector2 = ctl._goal.global_position - pos
 	var d := helper.distance(pos) if helper else INF
-	var limit: float = Party.rule("round_time") if Party.rule("round_time") > 0 else ctl.round_time
+	var limit := _limit()
 	for v in [to_goal.x / SCALE, to_goal.y / SCALE, p.velocity.x / SCALE, p.velocity.y / SCALE,
 			1.0 if p.is_on_floor() else 0.0, (d / 100.0) if is_finite(d) else 1.0,
 			clampf(1.0 - ctl.run_time / limit, 0.0, 1.0)]:

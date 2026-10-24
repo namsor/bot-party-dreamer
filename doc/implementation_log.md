@@ -399,7 +399,24 @@ Side effect: a checkpoint every ~10 min, so a stopped run loses at most 10 min o
 Restarted at 20:42 (from frame 7824: the aborted run's 2 races were kept in `train_eps/`,
 its updates were lost — no checkpoint yet). First eval: 3 races, `eval_return -9.9`, all timeouts.
 
-**Result:** (filled in when the run ends)
+**Result** — stopped at frame ~63,400 of 80,000 (≈ 22:10): Claude Code killed the run and
+TensorBoard because the PC ran critically low on memory (Python ≈ 1 GB + Godot + TensorBoard
++ eval window). Last checkpoint `logdir/short/latest.pt` at 22:09:46 → resumable with the same command.
+
+| frames | train races | eval |
+|---|---|---|
+| 49k–51k | eliminated after 90–200 steps (falls), return -11 … -13 | -11.4, 54 steps |
+| 53k–63k | **survives the full 40 s** (599–600 steps), return -8.7 … -9.9 | -9.6 / -9.9, 599 steps |
+
+- ❌ never reached the flag (`log_*_finished` = 0 in every race).
+- ✅ it learned something: **stop falling into pits** — races went from ~100 steps to the full
+  clock, `actor_entropy` 1.5 → 0.8 (the policy became more decided).
+- ⚠️ that is a **local optimum** of the reward: the time-out costs the same -5 as a pit, and
+  progress (+0.1 per cell) is too weak to pull it to the flag. Next fixes to try: a larger progress
+  reward / a bonus for the best distance reached, a smaller penalty for timing out than for dying,
+  then a longer run.
+- Speed: `fps 8.5` frames/s at `train_ratio 32` (vs 2.5 at 128 in the smoke run).
+
 
 ---
 
@@ -419,3 +436,77 @@ its updates were lost — no checkpoint yet). First eval: 3 races, `eval_return 
   Docs use `C:\Tools\Godot\...` as an example path.
 - **Not published:** `logdir/` (checkpoints, recorded races, TensorBoard), `runs/` (game logs,
   isolated APPDATA), `.venv/`. One eval minimap GIF (`doc/img/eval_minimap.gif`) for the README.
+
+---
+
+## Step 8 — Reward adjustment, then resume the short run (2026-10-24 22:23)
+
+**Why:** the short run settled in a local optimum, "survive until the clock runs out": a
+time-out cost the same -5 as a pit, falling also cost progress reward (the distance grows while
+falling), and +0.1 per cell was too weak to pay for the risk of moving. Dreamer had never seen
+the flag, so the +10 / +5 didn't exist for its world model.
+
+**New rewards** (`godot/rl/dreamer_controller.gd`):
+
+| | before | after |
+|---|---|---|
+| progress | +0.1 × Δ distance, ±1 / frame (negative when moving away / falling) | **+0.3 per cell closer than ever before in the race** (max 1 / frame): no penalty for stepping back or falling, nothing to farm |
+| time | -0.002 / frame | **-0.001 / frame** |
+| clock runs out | -5 (same as a pit) | **-1** (outcome `timeout`, detected as `run_time ≥ limit` when eliminated) |
+| trap / pit | -5 | -5 |
+| flag / first | +10 / +5 | +10 / +5 |
+
+Rough value of a 40 s race: flag ≈ +30 ≫ 15 cells then a fall ≈ -1 > wait for the clock ≈ -3.4 >
+early fall ≈ -4 > immediate death ≈ -5. (With the old time penalty, dying at once would have
+beaten waiting — checked before choosing -0.001.)
+
+**Recorded races relabeled** — `tools/relabel_rewards.py logdir/short` recomputes the rewards
+of the saved races from the state (index 5 = distance cells / 100) and the `log_*` flags, and
+adds `log_<mode>_timeout` (otherwise episodes with different keys would break Dreamer's sampler).
+Originals kept in `train_eps.orig/`, `eval_eps.orig/`.
+
+```
+train_eps: 109 races {'eliminated': 100, 'timeout': 9}; mean return -9.13 -> 1.38
+eval_eps:  33 races  {'timeout': 16, 'eliminated': 17}; mean return -9.97 -> 1.06
+```
+
+**Env:** new stat `log_<mode>_timeout` (TensorBoard), `eliminated` now means trap / pit only.
+
+**Check:** `tools/smoke_env.py --episodes 3` (random): no script error, returns 0.81, -1.26, -0.52
+(were ≈ -12).
+
+**Resumed** from `latest.pt` (22:09) with the relabeled data:
+`train.py --configs botparty short --prefill 0` → `Logger: (62652 steps)`; first eval (old policy,
+new rewards): 3 × timeout, `eval_return -0.1`. ~17k frames left (≈ 35–40 min).
+
+**Result** — the run completed (frame 81,052 ≥ 80,000; last checkpoint 23:37):
+
+| frames | train races | eval |
+|---|---|---|
+| 62.6k | — | 3 × timeout, -0.1 |
+| 65k–72k | all timeouts, return 0.5, -0.1, 0.2, 0.2 | 3 × timeout, -0.4 (72.4k) |
+| 74k–79k | all timeouts, return 0.2, **1.1, 0.9** | 3 × timeout, -0.1 (81k) |
+
+- ✅ no more falls: every race lasts the full clock.
+- ↗ return creeps up (≈ 0 → ≈ 1): it covers a bit more new ground per race.
+- ❌ still never reaches the flag — ~18k frames (≈ 75 min) is too short to judge the new rewards.
+
+---
+
+## Step 9 — Long training run, initialized from the short run (started 2026-10-24 23:41)
+
+```powershell
+mkdir logdir\steps; copy logdir\short\latest.pt, train_eps\, eval_eps\ into it   # no TensorBoard logs, videos, .orig backups
+.venv\Scripts\python -u train.py --configs botparty --prefill 0 --eval_minutes 30 > runs/train_steps.out
+```
+
+- Preset `botparty`: `steps 1e6` frames, `train_ratio 128` (4× more updates per step than `short`),
+  same model sizes as `short` → the weights load as is.
+- `--eval_minutes 30`: a checkpoint and an evaluation window (3 races, speed 2) every ~30 min,
+  instead of every 2e4 frames (≈ 2 h at this speed) — limits the loss if the run is stopped again.
+- Resumed at `Logger: (79428 steps)` (the recorded races); first eval: 3 × timeout, `eval_return -0.7`.
+- Expected speed ≈ 2.5 frames/s (smoke run, same `train_ratio`) → ~920k frames left ≈ **4–5 days**.
+  Resume after any stop with the same command (`logdir/steps/latest.pt`).
+
+**Result:** (filled in as it goes)
+
