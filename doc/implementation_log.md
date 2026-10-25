@@ -508,5 +508,31 @@ mkdir logdir\steps; copy logdir\short\latest.pt, train_eps\, eval_eps\ into it  
 - Expected speed ≈ 2.5 frames/s (smoke run, same `train_ratio`) → ~920k frames left ≈ **4–5 days**.
   Resume after any stop with the same command (`logdir/steps/latest.pt`).
 
-**Result:** (filled in as it goes)
+**Result so far** (2026-10-25 07:35, frame 216k of 1M, **4.4 frames/s** → ~2 more days; python 2.6 GB RAM):
+
+Races per hour, from the recorded races (`train_eps`, state index 5 = distance-map cells; a race
+starts ≈ 130 cells from the flag; "way" = share of that distance covered at best):
+
+| hour | races | mean return | mean way | best way | flag reached |
+|---|---|---|---|---|---|
+| before (smoke + short) | 117 | 1.3 | 17% | 46% | 0 |
+| 00h–02h | 276 | ≈ 0.5 | 13–17% | 73% | 0 |
+| 03h | 52 | 7.6 | 37% | 85% | 0 |
+| 04h | 78 | 9.1 | 37% | 99% | 3 (2 first) |
+| 05h | 51 | 9.0 | 37% | 93% | 0 |
+| 06h | 76 | 8.1 | 37% | 99% | 1 |
+| 07h (40 min) | 40 | 11.9 | 44% | 99% | 3 (2 first), best return +45.1 |
+
+- **~01:00, it stops waiting:** nearly every race ends in a trap or pit after ~50 steps (12 s)
+  instead of timing out — the new rewards at work (step 8).
+- **~03:00, it goes much further:** mean way 15% → 37%, then 44%.
+- **From 04:00, it reaches the flag:** 7 times in ~300 races, 4 of them first. Only in training races
+  (sampled actions); the evaluation races (best action) don't reach it yet but improved too:
+  mean way 10–18% → 46–57%, best 87%.
+- Next hurdle: getting past the traps reliably (36 of the 40 races of 07h ended in one).
+
+**Next ideas (not done):** once the flag is reached in most races, continue from this checkpoint with
+`--bot_skill hard` (finishing first becomes the challenge) and several arenas (racing in general,
+not one memorized map). Self-play would only pay off for the item-placement phase, where players
+really act on each other; it's done by `HelperBot` today.
 
