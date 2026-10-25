@@ -44,10 +44,12 @@ def main():
         print(f"copied: {sub}/")
 
     patch = str(GODOT_DIR / "command_line.patch")
-    if git(game, "apply", "--reverse", "--check", patch, check=False).returncode == 0:
+    if 'o.has("rl")' in (game / "core/command_line.gd").read_text(encoding="utf-8"):
         print("patch: core/command_line.gd already has --rl")
     else:
         result = git(game, "apply", patch, check=False)
+        if result.returncode:  # newer game: let git merge the changed context lines
+            result = git(game, "apply", "-3", patch, check=False)
         if result.returncode:
             sys.exit(f"patch failed (made for bot-party main @ 1eeaa7b):\n{result.stderr}")
         print("patch: core/command_line.gd now has --rl")

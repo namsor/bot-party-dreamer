@@ -67,6 +67,8 @@ cd bot-party-dreamer
    .venv\Scripts\pip install -r requirements.txt
    .venv\Scripts\pip install --no-deps -e ../godot_rl_agents
    ```
+   With an NVIDIA GPU, install the CUDA wheel instead (e.g. `--index-url https://download.pytorch.org/whl/cu128`)
+   and add `--device cuda:0` to the `train.py` / `watch.py` commands below.
 
 Training runs the game with its own `APPDATA` (`runs/appdata/<port>`): your real Bot Party
 saves and settings are never touched.
