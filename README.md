@@ -68,7 +68,10 @@ cd bot-party-dreamer
    .venv\Scripts\pip install --no-deps -e ../godot_rl_agents
    ```
    With an NVIDIA GPU, install the CUDA wheel instead (e.g. `--index-url https://download.pytorch.org/whl/cu128`)
-   and add `--device cuda:0` to the `train.py` / `watch.py` commands below.
+   and add `--device cuda:0` to the `train.py` / `watch.py` commands below. On an RTX 3080 (16 GB),
+   `--batch_size 64` is ~2x faster than the default 16 (128 fills the memory and is slower).
+   `--compile True` (triton-windows) makes an update ~20% faster on its own, but showed no clear
+   gain in a real run, where much of the time goes to the game (races, waits between races).
 
 Training runs the game with its own `APPDATA` (`runs/appdata/<port>`): your real Bot Party
 saves and settings are never touched.
@@ -87,9 +90,12 @@ saves and settings are never touched.
 - Any config key can be overridden: `--bot_skill hard`, `--arena`-style tasks `--task botparty_pillar`,
   `--eval_minutes 5`, `--speedup 4`.
 - A run resumes from `<logdir>/latest.pt` and `<logdir>/train_eps/` when started again with the same `--logdir`.
-- Watching: evaluation races open a game window (`eval_window`, `eval_speedup`); TensorBoard shows
-  `train_return`, `eval_return`, `log_train_first / finished / eliminated` and the minimap videos
+- Watching: evaluation races open a game window (`eval_window`, `eval_speedup`; `--eval_sound True`
+  beeps just before); TensorBoard shows `train_return`, `eval_return`,
+  `log_train_first / finished / timeout / eliminated / trap / pit` and the minimap videos
   (also saved as `logdir/<run>/videos/*.gif`).
+- Every race is also a line in `runs/races_<mode>_<port>.csv`: outcome and what eliminated P1
+  (the trap's name, e.g. `saw`, `spikes`, or `pit`). `watch.py --races 20 --speedup 2` prints the same.
 
 ## Layout
 

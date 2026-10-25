@@ -11,6 +11,9 @@ Observation keys
     log_<mode>_{first,finished,timeout,eliminated}   1 on the last step: per-race stats in TensorBoard
 """
 
+import sys
+import time
+
 import gym
 import numpy as np
 from godot_rl.core.godot_env import GodotEnv
@@ -19,6 +22,7 @@ from botparty_dreamer.game import ROOT, launch
 
 MOVES, JUMPS = 3, 2  # DreamerController.get_action_space(): move x jump
 OUTCOMES = ("first", "finished", "timeout", "eliminated")  # DreamerController outcomes
+CAUSES = ("trap", "pit")  # what eliminated P1 (DreamerController info "cause": a trap's name or "pit")
 
 # Layout of the 65 floats (DreamerController._features).
 RAYS, DANGERS, OTHERS = 16, 6, 3
@@ -29,25 +33,31 @@ class BotParty:
     metadata = {}
 
     def __init__(self, task="steps", mode="train", port=11008, seed=0, action_repeat=4, speedup=8.0,
-                 bots=3, bot_skill="easy", window=False, minimap=False, episodes_per_launch=0, exe=None):
+                 bots=3, bot_skill="easy", window=False, minimap=False, episodes_per_launch=0, exe=None, sound=False):
         """episodes_per_launch: close the game after that many races (0: never). Used for the
-        windowed eval env, so its window is only open while evaluating."""
+        windowed eval env, so its window is only open while evaluating.
+        sound: beep loudly just before the window opens, to call the human."""
         self._mode = mode
         self._minimap = minimap
         self._episodes_per_launch = episodes_per_launch
         self._launch_args = dict(port=port, arena=task, bots=bots, bot_skill=bot_skill, headless=not window,
                                  speedup=speedup, action_repeat=action_repeat, seed=seed, exe=exe,
                                  log=str(ROOT / "runs" / f"{mode}_{port}.log"))
+        self._races = ROOT / "runs" / f"races_{mode}_{port}.csv"  # one line per race, with the trap's name
+        self._race_return, self._race_steps = 0.0, 0
+        self._sound = sound and window
         self._proc = None
         self._env = None
         self._episodes = 0
-        self._start()
+        self._start(quiet=True)  # only to read the observation size
         self._obs_size = self._env.observation_space["obs"].shape[0]
         if episodes_per_launch:
             self._stop()  # the eval window opens with the first evaluation
         self.reward_range = [-np.inf, np.inf]
 
-    def _start(self):
+    def _start(self, quiet=False):
+        if self._sound and not quiet:
+            beep()
         self._proc = launch(**self._launch_args)
         self._env = GodotEnv(env_path=None, port=self._launch_args["port"])
         self._episodes = 0
@@ -76,7 +86,7 @@ class BotParty:
             "is_last": box((1,), np.uint8, 0, 1),
             "is_terminal": box((1,), np.uint8, 0, 1),
         }
-        spaces.update({f"log_{self._mode}_{k}": box((1,)) for k in OUTCOMES})
+        spaces.update({f"log_{self._mode}_{k}": box((1,)) for k in OUTCOMES + CAUSES})
         return gym.spaces.Dict(spaces)
 
     @property
@@ -94,7 +104,13 @@ class BotParty:
         for k in OUTCOMES:
             # "first" also counts as "finished"
             o[f"log_{self._mode}_{k}"] = np.float32(outcome == k or (k == "finished" and outcome == "first"))
+        cause = info.get("cause", "") if outcome == "eliminated" else ""
+        o[f"log_{self._mode}_trap"] = np.float32(bool(cause) and cause != "pit")
+        o[f"log_{self._mode}_pit"] = np.float32(cause == "pit")
+        self._race_return += float(reward[0])
+        self._race_steps += 1
         if done:
+            self._log_race(outcome, cause)
             self._episodes += 1
             if self._episodes_per_launch and self._episodes >= self._episodes_per_launch:
                 self._stop()  # evaluation is over: close the window until the next one
@@ -104,7 +120,16 @@ class BotParty:
         if self._env is None:
             self._start()
         obs, _ = self._env.reset()
+        self._race_return, self._race_steps = 0.0, 0
         return self._obs(obs[0]["obs"], first=True)
+
+    def _log_race(self, outcome, cause):
+        new = not self._races.exists()
+        with self._races.open("a", encoding="utf-8") as f:
+            if new:
+                f.write("time,outcome,cause,steps,return\n")
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')},{outcome},{cause},{self._race_steps},"
+                    f"{self._race_return:.2f}\n")
 
     def close(self):
         self._stop()
@@ -118,6 +143,18 @@ class BotParty:
             "is_last": last,
             "is_terminal": terminal,
         }
+
+
+def beep():
+    """Three loud beeps (through the speakers on Windows; the terminal bell elsewhere)."""
+    try:
+        import winsound
+
+        for freq in (880, 1175, 1760):
+            winsound.Beep(freq, 350)
+    except (ImportError, RuntimeError):
+        sys.stdout.write("\a\a\a")
+        sys.stdout.flush()
 
 
 def draw_minimap(s, size=64, view=700.0):

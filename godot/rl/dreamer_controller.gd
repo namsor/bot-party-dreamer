@@ -31,6 +31,8 @@ var episodes := 0
 
 var _terminal := false
 var _outcome := ""
+var _cause := ""            # eliminated by: a trap's scene name, or "pit" (left the map)
+var _trap_hit := ""         # the trap that touched P1 in this race, if any
 var _best_dist := INF       # closest to the flag so far in this race (cells)
 var _pressed := {}          # action name -> true
 
@@ -38,6 +40,10 @@ var _pressed := {}          # action name -> true
 func _ready() -> void:
 	super._ready()
 	reset_after = 1 << 30  # episodes end with the race, not after a number of steps
+	# Traps say whom they take out (Hazard.hit): listen to all of them, present and future.
+	get_tree().node_added.connect(_watch_hazard)
+	for n in get_tree().root.find_children("*", "Area2D", true, false):
+		_watch_hazard(n)
 
 
 # --- godot_rl_agents interface ----------------------------------------------------------
@@ -67,7 +73,7 @@ func get_reward() -> float:
 
 
 func get_info() -> Dictionary:
-	return {"terminal": _terminal, "outcome": _outcome, "episode": episodes}
+	return {"terminal": _terminal, "outcome": _outcome, "cause": _cause, "episode": episodes}
 
 
 func reset() -> void:
@@ -95,6 +101,7 @@ func tick() -> bool:
 		if ctl.run_time >= _limit() - 0.1:
 			_end(R_TIMEOUT, true, "timeout")  # the race eliminates whoever is still out there
 		else:
+			_cause = _trap_hit if _trap_hit else "pit"
 			_end(R_ELIMINATED, true, "eliminated")
 	elif p.get_meta("finished", false):
 		var first: bool = not ctl.finished.is_empty() and ctl.finished[0] == SLOT
@@ -124,6 +131,8 @@ func _start(p: Node) -> void:
 	reward = 0.0
 	_terminal = false
 	_outcome = ""
+	_cause = ""
+	_trap_hit = ""
 	_best_dist = helper.distance(p.global_position) if helper else INF
 
 
@@ -139,6 +148,36 @@ func _end(r: float, terminal: bool, outcome: String) -> void:
 ## The race's time limit in seconds (the party rule, else the arena's).
 func _limit() -> float:
 	return Party.rule("round_time") if Party.rule("round_time") > 0 else ctl.round_time
+
+
+func _watch_hazard(n: Node) -> void:
+	if n is Hazard and not n.hit.is_connected(_on_hazard_hit):
+		n.hit.connect(_on_hazard_hit.bind(n))
+
+
+func _on_hazard_hit(player: Node, hazard: Node) -> void:
+	if in_episode and not done and player == _p1():
+		_trap_hit = _trap_name(hazard)
+
+
+## The trap's name: the placed item's id (saw, spikes...), else the hazard's own script for the
+## ones made in code (crossbow bolts, planes, flamers, weather), else its parent's name.
+func _trap_name(h: Node) -> String:
+	var arena: Node = ctl.get_parent() if is_instance_valid(ctl) else null
+	var n := h
+	while n and n != arena:
+		if n.has_meta("record"):
+			return str(n.get_meta("record").get("id", "item"))
+		n = n.get_parent()
+	var path: String = h.get_script().resource_path if h.get_script() else ""
+	if path and not path.ends_with("/hazard.gd"):
+		return path.get_file().get_basename()  # "crossbow.gd::_Bolt" -> "crossbow"
+	n = h.get_parent()
+	while n and n != arena:
+		if n.get_script() and n.get_script().resource_path:
+			return n.get_script().resource_path.get_file().get_basename()  # flamer, arena_weather
+		n = n.get_parent()
+	return "trap"
 
 
 func _p1() -> Node:

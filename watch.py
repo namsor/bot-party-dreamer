@@ -57,7 +57,7 @@ try:
         outcome = info.get("outcome", "")
         wins += outcome == "first"
         finishes += outcome in ("first", "finished")
-        print(f"race {race + 1}: {outcome:10s} return {ret:7.2f}")
+        print(f"race {race + 1}: {outcome:10s} {info.get('cause', ''):12s} return {ret:7.2f}")
 finally:
     env.close()
 print(f"first {wins}/{args.races}, finished {finishes}/{args.races}")

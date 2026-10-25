@@ -9,3 +9,4 @@ gym==0.26.2
 ruamel.yaml
 tensorboard
 moviepy==1.0.3   # TensorBoard videos (torch needs moviepy.editor)
+triton-windows<3.8; sys_platform == "win32"   # --compile True on GPU (3.7 matches torch 2.11)

@@ -6,7 +6,7 @@ botparty:
   task: botparty_steps          # botparty_<arena>: steps, pillar, windy, meteor, random
   logdir: logdir/steps
   device: cpu                   # no NVIDIA GPU here
-  compile: False                # torch.compile needs a C++ toolchain on Windows
+  compile: False                # train.compile_networks: ~20% faster updates, no clear gain overall
   steps: 1e6
   action_repeat: 4
   envs: 1
@@ -25,7 +25,8 @@ botparty:
   units: 256
   encoder: {mlp_keys: 'state', cnn_keys: '$^', mlp_layers: 3, mlp_units: 256}
   decoder: {mlp_keys: 'state', cnn_keys: '$^', mlp_layers: 3, mlp_units: 256}
-  actor: {dist: 'onehot', std: 'none'}
+  actor: {dist: 'onehot', std: 'none', entropy: 1e-3}  # default 3e-4: entropy fell to 0.33 of 1.79 by 100k
+                                # frames, too little trying near the traps
   imag_gradient: 'reinforce'
   # The game (botparty_dreamer/env.py)
   port: 11008                   # train envs 11008+i, eval envs 11108+i
@@ -34,6 +35,7 @@ botparty:
   speedup: 8                    # training game speed
   eval_window: True             # evaluation races in a window...
   eval_speedup: 2               # ...at this speed (1 = real time)
+  eval_sound: False             # beep just before the evaluation window opens
   exe: ''                       # exported BotParty.exe (step 4); '' = Godot editor binary + project
 
 # Quick end-to-end check (minutes, not a real training)
