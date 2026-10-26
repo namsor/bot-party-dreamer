@@ -536,3 +536,105 @@ starts ≈ 130 cells from the flag; "way" = share of that distance covered at be
 not one memorized map). Self-play would only pay off for the item-placement phase, where players
 really act on each other; it's done by `HelperBot` today.
 
+
+---
+
+## Step 10 — GPU training: 2M frames, then a larger model (2026-10-25 → 26)
+
+New machine with an **NVIDIA RTX 3080 Laptop (16 GB)**. Same setup (step 2) except PyTorch:
+`pip install torch --index-url https://download.pytorch.org/whl/cu128` (2.11 + CUDA 12.8), and
+`--device cuda:0` on the command line (`device: cpu` stays the default). Bot Party had moved on
+(v0.29): the `--rl` patch no longer applied as is, so `tools/install_godot.py` now falls back to a
+3-way apply and recognizes an already patched file by its content.
+
+### 10.1 Making the GPU worth it
+
+| setting | frames/s | why |
+|---|---|---|
+| CPU sizes, batch 16 × 64 | 9–15 | the GPU waits: thousands of tiny kernels per update, ~0.5 s each |
+| `--batch_size 128` | 11–14 | 16 GB full, spills into shared memory |
+| **`--batch_size 64`** | 20–30 | 4× the data per update, update every 8 actions instead of 2 |
+| `--compile True` | no clear gain | an update alone is 20% faster, but races and waits between races dominate |
+
+- `torch.compile` needs `triton-windows` (now in `requirements.txt`), and dreamerv3-torch only
+  compiles `forward()`, which training never calls: `train.compile_networks` compiles the MLPs and
+  the GRU cell instead. Left off.
+- Speed in frames/s mostly follows race length: every new race waits ~2 s for the countdown.
+
+### 10.2 Run `steps`: 2M frames, small model (`logdir/steps`, ~26 h)
+
+`train.py --configs botparty --device cuda:0 --train_ratio 512 --batch_size 64 --eval_minutes 10 --eval_sound True`,
+`--steps 2e6` from 600k on. Changes on the way: actor entropy 3e-4 → 1e-3 (at 130k) → 3e-3 (at 940k).
+
+| frames | races | flag | first |
+|---|---|---|---|
+| 0–250k | 840 | 5% | 4% |
+| 250–500k | 917 | 11% | 8% |
+| 500k–1M | 1719 | 9–11% | 6–8% |
+| 1M–1.5M | 1579 | 11–14% | 8–11% |
+| 1.5M–2M | 1999 | 13–14% | 9–10% |
+
+- 7196 training races, 800 at the flag (570 first); 456 eval races, 96 at the flag (71 first).
+  Once at the flag, it is first ~70% of the time (bots on `easy`).
+- Fast start, then a **plateau from ~500k**; the world model stopped improving too
+  (`reward_loss` ≈ 0.5 from 250k on). More entropy helped a little (11% → 13–14%).
+- **Stalls** every few hundred k frames (races run out the clock), gone within ~1 h each time.
+- `watch.py --races 10`: the last model won 2/10 (7 deaths on one saw); `best.pt` won 1/10, see 10.4.
+
+### 10.3 Run `large`: dreamerv3-torch default sizes (`logdir/large`, ~7 h)
+
+Preset `large` (`dyn_hidden/dyn_deter/units 512`, encoder/decoder 512): world model 8.1M parameters
+(2.9M before), 12–13 GB on the GPU at batch 64. **Started from the 7196 races of `steps`** (copied
+`train_eps/`), so the world model starts from 500k actions of experience; the step count starts
+at 2.03M, hence `steps: 4e6`. 5 eval races every 10 min.
+
+| frames since start | races | flag | first | mean return |
+|---|---|---|---|---|
+| 0–50k | 273 | 4% | 4% | 7.2 |
+| 50–150k | 500 | 7% | 4–5% | 11 |
+| 150–250k | 542 | 10–13% | 9–10% | 13 |
+| 250–300k | 285 | 14% | 12% | 15.8 |
+| 300–325k | 59 | 19% | 15% | 18.6 |
+
+- Reaches in 7 h what `steps` reached in ~17 h, and the best 100-race stretch (21% flag, 16% first)
+  equals the best of `steps` (22%). Still rising when stopped (frame 2.35M); not yet clearly above.
+- Eval: 200 races, 32 at the flag (29 first); 3 of 5 won at 19:47.
+- **Curiosity (Plan2Explore), 2 h** — preset `explore`: an explorer plays the training races, rewarded
+  by the game and by the disagreement of an ensemble (`disag_log: False`: a log bonus is mostly
+  negative, which teaches ending races early). Halved the speed, filled the GPU with the default
+  ensemble (10 × 4 × 400: down to 5 × 2 × 256), and the explorer still ran right 99% of the time.
+  Its races went 5% → 17% flag; eval 10% → 18%, which held after turning it off. Not clearly worth
+  its cost; turned off.
+- Resuming with different parts (explorer on/off, sizes): `train.load_new_parts` loads what fits
+  and keeps the rest fresh — and doesn't load an old explorer into the task actor (with
+  exploration off, `_expl_behavior` *is* the task actor-critic).
+
+### 10.4 New tools
+
+- **Cause of death per race**: `DreamerController` listens to every trap's `Hazard.hit`; info
+  `cause` = the trap's item id (`saw`, `spikes`, `mine`, `flamer`, `sine_saw`…, or the script name of
+  code-made ones), or `pit` when P1 left the map. Stats `log_<mode>_trap / pit`, one CSV line per
+  race in `runs/races_<mode>_<port>.csv`, and `watch.py` prints it.
+- **`best.pt`** (`train.save_best`): after each checkpoint, copied when the last 100 training races
+  reached the flag most often (mean return breaks ties); score in `best.json`. Caveat: those races
+  span ~20 min of changing weights *and* changing courses (traps added every round) — in run `steps`
+  the `best.pt` lost to the final model in 10 races (1 vs 2 wins, mean return 12 vs 25).
+- `--eval_sound True`: three beeps before the evaluation window opens.
+
+### 10.5 What stops it now
+
+Training races of `large` (1659): **pit 29%, saw 23%, spikes 12%, other traps 11%, mine 8%,
+flamer 7%** — flag 10%. And it almost never waits or goes left (< 1% of actions): one eval race
+overshot the flag by 89 px, then jumped against the wall behind it for 34 s.
+
+The bots (`party_bot.gd`) don't have better reflexes: easy bots re-plan only every 10 frames. They
+**know more**: they test ~30 per-frame plans (including "stop" and "wait") against a copy of the
+player physics and the **exact future positions of moving traps** (`moved_by(t)`, 3.6 s ahead),
+flamer timing (`firing_in`), crossbow shots. Dreamer sees 65 numbers: 16 rays, the 6 nearest trap
+boxes (no type, no rail, no on/off — a flamer box looks deadly all the time), the 3 nearest robots.
+Timing is not the problem: a saw goes back and forth in 2.4 s (36 Dreamer steps); coyote time and
+jump buffer (6–7 frames) exceed an action's 4 frames.
+
+**Next:** learn from the full frames (what the human sees) instead of the 65 numbers; or add what
+the bots know to the numbers (flamer on/off, trap type, trap position 0.5 s ahead, rays for pits).
+Smaller fixes: finer progress reward next to the flag, end a race stuck for ~6 s, varied arenas.

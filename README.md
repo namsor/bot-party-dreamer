@@ -37,6 +37,11 @@ this repo is the dad's side project to "cheat" at it with reinforcement learning
 The full story, step by step with results and every problem met:
 [doc/implementation_log.md](doc/implementation_log.md). The initial plan: [doc/dreamer3_steps.md](doc/dreamer3_steps.md).
 
+**Where it stands** (2026-10-26, [step 10](doc/implementation_log.md#step-10--gpu-training-2m-frames-then-a-larger-model-2026-10-25--26)):
+on a GPU, P1 reaches the flag in ~14% of its races (up to 21% over 100 races), and when it does it
+beats the 3 easy bots ~70% of the time. Traps and pits end the other races: unlike the bots, it
+can't see where a saw will be or whether a flamer is on.
+
 ## Setup
 
 Clone the four repos side by side (the scripts look for siblings; override with `BOT_PARTY`,
@@ -87,6 +92,15 @@ saves and settings are never touched.
 .venv\Scripts\python watch.py --configs botparty short --logdir logdir/short --speedup 1   # watch a checkpoint
 ```
 
+On the GPU (step 10):
+
+```powershell
+.venv\Scripts\python train.py --configs botparty --device cuda:0 --train_ratio 512 --batch_size 64 --eval_minutes 10
+# larger model, started from another run's races: copy logdir/steps/train_eps to logdir/large/ first
+.venv\Scripts\python train.py --configs botparty large --device cuda:0 --train_ratio 512 --batch_size 64 --eval_minutes 10 --eval_episode_num 5
+.venv\Scripts\python watch.py --configs botparty large --device cuda:0 --races 10           # its latest.pt
+```
+
 - Any config key can be overridden: `--bot_skill hard`, `--arena`-style tasks `--task botparty_pillar`,
   `--eval_minutes 5`, `--speedup 4`.
 - A run resumes from `<logdir>/latest.pt` and `<logdir>/train_eps/` when started again with the same `--logdir`.
@@ -96,13 +110,17 @@ saves and settings are never touched.
   (also saved as `logdir/<run>/videos/*.gif`).
 - Every race is also a line in `runs/races_<mode>_<port>.csv`: outcome and what eliminated P1
   (the trap's name, e.g. `saw`, `spikes`, or `pit`). `watch.py --races 20 --speedup 2` prints the same.
+- Besides `latest.pt`, `<logdir>/best.pt` keeps the checkpoint whose last 100 training races reached
+  the flag most often (`best.json`). It's a noisy pick: compare with `watch.py --checkpoint`.
+- A run can be resumed with parts added or removed (curiosity on/off, sizes): what fits is loaded,
+  the rest starts fresh.
 
 ## Layout
 
 ```
 botparty_dreamer/game.py   start Godot in --rl mode (isolated APPDATA)
 botparty_dreamer/env.py    Dreamer env: state, actions, per-race stats, eval minimap
-configs/botparty.yaml      presets botparty / smoke / short (on top of dreamerv3-torch defaults)
+configs/botparty.yaml      presets botparty / large / explore / smoke / short (on top of dreamerv3-torch defaults)
 train.py                   dreamer.main() with our make_env + fixes, eval every N minutes
 watch.py                   load latest.pt and race in a window
 godot/rl/                  RlTrainer, RlSync, DreamerController, HelperBot (GDScript)

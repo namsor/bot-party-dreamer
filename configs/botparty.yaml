@@ -25,8 +25,8 @@ botparty:
   units: 256
   encoder: {mlp_keys: 'state', cnn_keys: '$^', mlp_layers: 3, mlp_units: 256}
   decoder: {mlp_keys: 'state', cnn_keys: '$^', mlp_layers: 3, mlp_units: 256}
-  actor: {dist: 'onehot', std: 'none', entropy: 1e-3}  # default 3e-4: entropy fell to 0.33 of 1.79 by 100k
-                                # frames, too little trying near the traps
+  actor: {dist: 'onehot', std: 'none', entropy: 3e-3}  # default 3e-4: entropy fell to 0.33 of 1.79 by 100k
+                                # frames, too little trying near the traps; 1e-3 only held it ~0.33 at 900k
   imag_gradient: 'reinforce'
   # The game (botparty_dreamer/env.py)
   port: 11008                   # train envs 11008+i, eval envs 11108+i
@@ -37,6 +37,30 @@ botparty:
   eval_speedup: 2               # ...at this speed (1 = real time)
   eval_sound: False             # beep just before the evaluation window opens
   exe: ''                       # exported BotParty.exe (step 4); '' = Godot editor binary + project
+
+# Larger model (dreamerv3-torch's default sizes) for a GPU. Start it with a copy of another run's
+# train_eps/ to reuse its races: the step count then starts there, hence steps 4e6.
+large:
+  logdir: logdir/large
+  steps: 4e6
+  dyn_hidden: 512
+  dyn_deter: 512
+  units: 512
+  encoder: {mlp_units: 512}
+  decoder: {mlp_units: 512}
+
+# Curiosity (Plan2Explore): until expl_until (frames), training races are played by an explorer that
+# seeks both the game's reward and what the world model can't predict yet; the task actor still plays
+# the evaluation races. disag_log off: a log bonus is mostly negative, which teaches ending races early.
+explore:
+  expl_behavior: plan2explore
+  expl_until: 3.2e6
+  expl_extr_scale: 1.0
+  expl_intr_scale: 1.0
+  disag_log: False
+  disag_models: 5               # default ensemble 10 x 4 layers x 400 filled the 16 GB GPU with `large`
+  disag_layers: 2
+  disag_units: 256
 
 # Quick end-to-end check (minutes, not a real training)
 smoke:

@@ -91,6 +91,88 @@ def compile_networks(enabled):
     dreamer.Dreamer.__init__ = __init__
 
 
+def load_new_parts():
+    """Resume a run with parts its checkpoint doesn't have yet (e.g. turning on plan2explore), or
+    that changed size: load what fits, keep the rest fresh. dreamer.main() loads strictly."""
+    original = dreamer.Dreamer.load_state_dict
+
+    def load_state_dict(self, state_dict, strict=True, **kwargs):
+        own = self.state_dict()
+        state_dict = {k: v for k, v in state_dict.items() if k not in own or own[k].shape == v.shape}
+        if self._expl_behavior is self._task_behavior:
+            # Exploration off: _expl_behavior is the task actor-critic, don't load an old explorer
+            # into it.
+            state_dict = {k: v for k, v in state_dict.items() if not k.startswith("_expl_behavior.")}
+        result = original(self, state_dict, strict=False, **kwargs)
+        # The explorer's copy of the world model is the same module as _wm: already loaded.
+        new = sorted({k.split(".")[0] for k in result.missing_keys if "_world_model" not in k})
+        if self._expl_behavior is self._task_behavior and "_expl_behavior" in new:
+            new.remove("_expl_behavior")  # an alias of _task_behavior, loaded under that name
+        if new:
+            print(f"checkpoint: new parts start fresh: {', '.join(new)}", flush=True)
+        return result
+
+    dreamer.Dreamer.load_state_dict = load_state_dict
+
+    # Same for the optimizers: skip the ones the agent doesn't have (e.g. plan2explore turned off).
+    def load_optims(obj, optimizers_state_dicts):
+        for path, state in optimizers_state_dicts.items():
+            target = obj
+            for key in path.split("."):
+                target = getattr(target, key, None)
+            if target is None:
+                print(f"checkpoint: optimizer {path} no longer used", flush=True)
+            else:
+                target.load_state_dict(state)
+
+    tools.recursively_load_optim_state_dict = load_optims
+
+
+def save_best(logdir, races=100):
+    """dreamerv3-torch only keeps latest.pt, overwritten at each evaluation. After each save, also
+    copy it to best.pt when the last `races` training races reached the flag more often than ever
+    (mean return breaks ties); the score is in best.json. Training races, not the 3 eval races:
+    far less noise."""
+    import json
+    import shutil
+
+    import torch
+
+    logdir = pathlib.Path(logdir)
+    original = torch.save
+
+    def save(obj, f, *args, **kwargs):
+        original(obj, f, *args, **kwargs)
+        if not isinstance(f, (str, pathlib.Path)) or pathlib.Path(f).name != "latest.pt":
+            return
+        rows = []
+        with open(logdir / "metrics.jsonl", encoding="utf-8") as m:
+            for line in m:
+                if '"log_train_finished"' in line:
+                    rows.append(json.loads(line))
+        rows = rows[-races:]
+        if len(rows) < races:
+            return
+        score = {
+            "step": rows[-1]["step"],
+            "flag": sum(r["log_train_finished"] for r in rows) / races,
+            "first": sum(r["log_train_first"] for r in rows) / races,
+            "mean_return": sum(r["train_return"] for r in rows) / races,
+            "races": races,
+            "time": time.strftime("%Y-%m-%d %H:%M"),
+        }
+        best = logdir / "best.json"
+        old = json.loads(best.read_text()) if best.exists() else None
+        if old and (score["flag"], score["mean_return"]) <= (old["flag"], old["mean_return"]):
+            return
+        shutil.copyfile(f, logdir / "best.pt")
+        best.write_text(json.dumps(score, indent=1))
+        print(f"best.pt: last {races} training races reached the flag {100 * score['flag']:.0f}% "
+              f"(first {100 * score['first']:.0f}%), mean return {score['mean_return']:.1f}", flush=True)
+
+    torch.save = save
+
+
 def gif_videos(logdir, zoom=4):
     """TensorBoard videos without temp files: torch's make_video reopens a NamedTemporaryFile,
     which Windows forbids (PermissionError). Encode the GIF in memory with Pillow instead, and
@@ -166,6 +248,8 @@ if __name__ == "__main__":
     config = load_config(sys.argv[1:])
     use_device(config.device)
     compile_networks(config.compile)
+    load_new_parts()
+    save_best(config.logdir)
     gif_videos(config.logdir)
     eval_every_minutes(config.eval_minutes)
     dreamer.make_env = make_env
